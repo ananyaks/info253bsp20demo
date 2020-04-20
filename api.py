@@ -3,6 +3,7 @@ import json
 import logging
 
 from key_service import verify_key
+from db_service import get_db_connection
 
 app = Flask(__name__)
 
@@ -26,6 +27,10 @@ def add_task():
         max_id += 1
 
         app_tasks[max_id] = {"title": title, "is_completed": False}
+
+        cursor = get_db_connection()
+        sql = f"INSERT INTO tasks (title, is_completed) VALUES (%s, %s)"
+        cursor.execute(sql, [title, False])
         status_code = 201
 
         response_msg = {"id": max_id}
@@ -54,13 +59,22 @@ def list_all_tasks():
     if not verify_key(request.args.get("api_key")):
         return "Error: api key not authorized", 401
 
+    
+
     def build_task(id, task):
         resp_task = task
         resp_task["id"] = id
         return resp_task
 
     response_msg = dict()
-    response_msg["tasks"] = [ build_task(id, task) for id, task in app_tasks.items() ]
+
+    cursor = get_db_connection()
+    sql = f"SELECT id, title, is_completed from tasks"
+    cursor.execute(sql)
+    data = cursor.fetchall()
+
+    
+    response_msg["tasks"] = [ {"id": row[0], "title": row[1], "is_completed": row[2]} for row in data ]
     status_code = 200
 
     resp = Response(json.dumps(response_msg), status=status_code)
