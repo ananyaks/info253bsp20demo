@@ -8,7 +8,7 @@ def get_db_connection():
     global cursor
 
     if not cursor:
-        db = MySQLdb.connect(os.environ.get("DB_HOST"), os.environ.get("DB_USER"), os.environ.get("DB_PASSWORD"), os.environ.get("DB_NAME"))
+        db = psycopg2.connect( host=os.environ.get("DB_HOST"), user=os.environ.get("DB_USER"), password=os.environ.get("DB_PASSWORD"), dbname=os.environ.get("DB_NAME") )
         cursor = db.cursor()
 
     return cursor
