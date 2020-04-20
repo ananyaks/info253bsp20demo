@@ -1,6 +1,6 @@
 import os
 
-import MySQLdb
+import psycopg2
 
 cursor = None
 
