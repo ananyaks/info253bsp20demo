@@ -2,16 +2,22 @@ from flask import Flask, request, Response
 import json
 import logging
 
+from key_service import verify_key
+
 app = Flask(__name__)
 
 app_tasks = {}
 max_id = 0
+
 
 @app.route('/v1/tasks', methods=["POST"])
 def add_task():
 
     arguments = request.get_json()
     global max_id
+
+    if not verify_key(arguments.get("api_key")):
+        return "Error: api key not authorized", 401
 
     tasks = arguments.get("tasks", None)
     if not tasks:
@@ -45,6 +51,9 @@ def add_task():
 @app.route('/v1/tasks', methods=["GET"])
 def list_all_tasks():
 
+    if not verify_key(request.args.get("api_key")):
+        return "Error: api key not authorized", 401
+
     def build_task(id, task):
         resp_task = task
         resp_task["id"] = id
@@ -60,6 +69,9 @@ def list_all_tasks():
 
 @app.route('/v1/tasks/<id>', methods=["GET"])
 def get_task(id):
+
+    if verify_key(request.args.get("api_key")):
+        return "Error: api key not authorized", 401
 
     response_msg = dict()
     int_id = int(id)
@@ -122,4 +134,15 @@ def edit_task(id):
 
     resp = Response(json.dumps(response_msg), status=status_code)
     return resp
+
+
+@app.route('/v1/tasks/new/endpoint', methods=["POST"])
+def create_super_tasks():
+    
+    arguments = request.get_json()
+    title = arguments.get(title)
+
+    sql = f'INSERT INTO tasks (title) values ("{title}")'
+
+    'INSERT INTO tasks (title) VALUES (?)', title
 
