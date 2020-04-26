@@ -1,162 +1,209 @@
-from flask import Flask, request, Response
+from flask import Flask, request, jsonify, render_template
+from uszipcode import SearchEngine
+import MySQLdb
+import requests
 import json
-import logging
+from twilio import twiml
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from key_service import verify_key
 from db_service import get_db_connection
 
+states = {
+    'AK': 'Alaska',
+    'AL': 'Alabama',
+    'AR': 'Arkansas',
+    'AS': 'American Samoa',
+    'AZ': 'Arizona',
+    'CA': 'California',
+    'CO': 'Colorado',
+    'CT': 'Connecticut',
+    'DC': 'District of Columbia',
+    'DE': 'Delaware',
+    'FL': 'Florida',
+    'GA': 'Georgia',
+    'GU': 'Guam',
+    'HI': 'Hawaii',
+    'IA': 'Iowa',
+    'ID': 'Idaho',
+    'IL': 'Illinois',
+    'IN': 'Indiana',
+    'KS': 'Kansas',
+    'KY': 'Kentucky',
+    'LA': 'Louisiana',
+    'MA': 'Massachusetts',
+    'MD': 'Maryland',
+    'ME': 'Maine',
+    'MI': 'Michigan',
+    'MN': 'Minnesota',
+    'MO': 'Missouri',
+    'MP': 'Northern Mariana Islands',
+    'MS': 'Mississippi',
+    'MT': 'Montana',
+    'NA': 'National',
+    'NC': 'North Carolina',
+    'ND': 'North Dakota',
+    'NE': 'Nebraska',
+    'NH': 'New Hampshire',
+    'NJ': 'New Jersey',
+    'NM': 'New Mexico',
+    'NV': 'Nevada',
+    'NY': 'New York',
+    'OH': 'Ohio',
+    'OK': 'Oklahoma',
+    'OR': 'Oregon',
+    'PA': 'Pennsylvania',
+    'PR': 'Puerto Rico',
+    'RI': 'Rhode Island',
+    'SC': 'South Carolina',
+    'SD': 'South Dakota',
+    'TN': 'Tennessee',
+    'TX': 'Texas',
+    'UT': 'Utah',
+    'VA': 'Virginia',
+    'VI': 'Virgin Islands',
+    'VT': 'Vermont',
+    'WA': 'Washington',
+    'WI': 'Wisconsin',
+    'WV': 'West Virginia',
+    'WY': 'Wyoming'
+}
+
+# Initiate app
 app = Flask(__name__)
 
-app_tasks = {}
-max_id = 0
+def sensor():
+    """ Function for test purposes. """
+    print("Scheduler is alive!")
+
+sched = BackgroundScheduler(daemon=True)
+sched.add_job(sensor,'interval',minutes=1)
+sched.start()
+
+search = None
+cursor = None
+db = None
 
 
-@app.route('/v1/tasks', methods=["POST"])
-def add_task():
+def get_search():
+    global search
+    if not search:
+        search = SearchEngine(simple_zipcode=True)
+    return search
 
-    arguments = request.get_json()
-    global max_id
 
-    if not verify_key(arguments.get("api_key")):
-        return "Error: api key not authorized", 401
-
-    tasks = arguments.get("tasks", None)
-    if not tasks:
-        title = str(arguments.get("title"))
-
-        max_id += 1
-
-        app_tasks[max_id] = {"title": title, "is_completed": False}
-
-        cursor = get_db_connection()
-        sql = f"INSERT INTO tasks (title, is_completed) VALUES (%s, %s)"
-        cursor.execute(sql, [title, False])
-        status_code = 201
-
-        response_msg = {"id": max_id}
-
-        resp = Response(json.dumps(response_msg), status=status_code)
-        return resp
-    
-    else:
-
-        response_msg = dict()
-        response_msg["tasks"] = list()
-
-        for task in tasks:
-            max_id += 1
-
-            app_tasks[max_id] = {"title": str(task["title"]), "is_completed": bool(task["is_completed"])}
-            response_msg["tasks"].append({"id": max_id})
-            status_code = 201
-
-        resp = Response(json.dumps(response_msg), status=status_code)
-        return resp
-
-@app.route('/v1/tasks', methods=["GET"])
-def list_all_tasks():
-
-    if not verify_key(request.args.get("api_key")):
-        return "Error: api key not authorized", 401
-
-    
-
-    def build_task(id, task):
-        resp_task = task
-        resp_task["id"] = id
-        return resp_task
-
-    response_msg = dict()
-
+@app.route("/register", methods=['GET', 'POST'])
+def register_user():
+    global db
     cursor = get_db_connection()
-    sql = f"SELECT id, title, is_completed from tasks"
-    cursor.execute(sql)
+    data = request
+
+    if data.form:
+        data = data.form
+    else:
+        data = data.get_json()
+
+    try:
+        name = data["first_name"]
+        surname = data["last_name"]
+        phone = data["phone"]
+        zipcode = data["zipcode"]
+        sql = f"INSERT INTO users (name, surname, phone, zipcode) VALUES (%s, %s, %s, %s)"
+        cursor.execute(sql, [name, surname, phone, zipcode])
+        db.commit()
+        return (''), 200
+    except:
+        return "error: couldn't register user", 400
+
+# update user
+@app.route("/update", methods=['POST'])
+def update_user():
+    cursor = get_db_connection()
+    data = request
+    
+    if data.form:
+        data = data.form
+    else:
+        data = data.get_json()
+
+    last_phone = data["last_phone"]
+    if exists(last_phone):
+        name = data["first_name"]
+        surname = data["last_name"]
+        new_phone = data["new_phone"]
+        zipcode = data["zipcode"]
+        sql = "UPDATE users SET name = '{name}', surname = '{surname}', phone = '{phone}', zipcode = '{zipcode}' WHERE phone = {last_phone}".format(
+            name=str(name), surname=str(surname), phone=str(new_phone), zipcode=str(zipcode), last_phone = str(last_phone))
+        cursor.execute(sql)
+        db.commit()
+        return (''), 200
+    else:
+        return "error: user doesn't exist", 400
+
+      
+@app.route("/unsubscribe/<int:phone>", methods=['GET', 'POST'])
+def unsubscribe_user(phone):
+    global db
+    cursor = get_db_connection()
+
+    sql_check= f"SELECT FROM users WHERE phone = %s"
+    cursor.execute(sql, [phone])
     data = cursor.fetchall()
+    if not data:
+        return "error: user doesn't exist", 404
 
-    
-    response_msg["tasks"] = [ {"id": row[0], "title": row[1], "is_completed": row[2]} for row in data ]
-    status_code = 200
+    sql = f"DELETE FROM users WHERE phone = %s"
+    cursor.execute(sql, [phone])
+    db.commit()
+    return "sucess", 204
 
-    resp = Response(json.dumps(response_msg), status=status_code)
-    return resp
+# endpoint que llame al endpoint de county
+@app.route("/send", methods=['POST'])
+def send_data():
+    search = get_search()
+    cursor = get_db_connection()
 
+    cursor.execute("SELECT name, surname, phone, zipcode from users")
+    data = cursor.fetchall()
+    list_users = {"users": list()}
+    for row in data:
+        response_msg = dict()
+        response_msg["name"] = row[0]
+        response_msg["surname"] = row[1]
+        response_msg["phone"] = row[2]
+        response_msg["zipcode"] = row[3]
+        list_users["users"].append(response_msg)
 
-@app.route('/v1/tasks/<id>', methods=["GET"])
-def get_task(id):
+        zipcode = search.by_zipcode(response_msg["zipcode"])
+        zipcode = zipcode.to_dict()
+        state = states[zipcode["state"]].lower()
+        county = zipcode["county"].replace(" County", "").lower()
+        url = "http://arielms.pythonanywhere.com/query/{state}/{county}".format(
+            state=state, county=county)
+        response = requests.get(url)
+        response_dict = json.loads(response.text)
+        # returns a list with 1 object
+        # keys are Confirmed, Deaths, Recovered, Active, Date
+        # print(response_dict)
 
-    if verify_key(request.args.get("api_key")):
-        return "Error: api key not authorized", 401
+        # TODO Add twilio request below
 
-    response_msg = dict()
-    int_id = int(id)
-
-    if int_id in app_tasks:
-        response_msg.update(app_tasks[int_id])
-        response_msg["id"] = int_id
-        status_code = 200
-    else:
-        response_msg["error"] = "There is no task at that id"
-        status_code = 404
-
-    resp = Response(json.dumps(response_msg), status=status_code)
-    return resp
-
-@app.route('/v1/tasks', methods=["DELETE"])
-def delete_bulk_tasks():
-
-    tasks = request.get_json()["tasks"]
-
-    for task in tasks:
-        app_tasks.pop(task["id"], None)
-    
-    status_code = 204
-
-    resp = Response('', status=status_code)
-    return resp
-
-@app.route('/v1/tasks/<id>', methods=["DELETE"])
-def delete_task(id):
-
-    response_msg = dict()
-    int_id = int(id)
-
-    if int_id in app_tasks:
-        del app_tasks[int_id]
-    status_code = 204
-
-    resp = Response('', status=status_code)
-    return resp
+    return (''), 200
 
 
-@app.route('/v1/tasks/<id>', methods=["PUT"])
-def edit_task(id):
-
-    response_msg = dict()
-    int_id = int(id)
-
-    arguments = request.get_json()
-    title = str(arguments.get("title"))
-    is_completed = bool(arguments.get("is_completed"))
-
-    if int_id in app_tasks:
-        app_tasks[int_id]["title"] = title
-        app_tasks[int_id]["is_completed"] = is_completed
-        status_code = 204
-    else:
-        response_msg["error"] = "There is no task at that id"
-        status_code = 404
-
-    resp = Response(json.dumps(response_msg), status=status_code)
-    return resp
-
-
-@app.route('/v1/tasks/new/endpoint', methods=["POST"])
-def create_super_tasks():
-    
-    arguments = request.get_json()
-    title = arguments.get(title)
-
-    sql = f'INSERT INTO tasks (title) values ("{title}")'
-
-    'INSERT INTO tasks (title) VALUES (?)', title
-
+def exists(phone):
+    try:
+        print('gets here1')
+        sql = "SELECT * FROM users WHERE phone = '{phone}'".format(
+            phone=str(phone))
+        cursor = get_db_connection()
+        cursor.execute(sql)
+        data = cursor.fetchall()
+        data = data[0]
+        name = data[0]
+        surname = data[1]
+        phone = data[2]
+        zipcode = data[3]
+        return True
+    except:
+        return False
