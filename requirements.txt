@@ -1,7 +1,9 @@
 flask
-MySQLdb
 requests
 uszipcode
 twilio
 requests
 psycopg2
+flask_restful
+mysqlclient
+apscheduler
