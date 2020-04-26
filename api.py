@@ -6,7 +6,6 @@ import json
 from twilio import twiml
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from key_service import verify_key
 from db_service import get_db_connection
 
 states = {
